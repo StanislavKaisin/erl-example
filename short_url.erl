@@ -1,71 +1,88 @@
 -module(short_url).
 
+-behavior(gen_server). %implements IGenServer
+
 -export([start/0, stop/0, restart/0, short/1, long/1]).
+
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+
+
 % -export([rand_char/0, rand_string/1]).
 
 % API methods
 start()->
-  io:format("start called~n"),
-  Pid=spawn(fun()->loop(dict:new()) end),
-  % register this process
-  register(short_url_server, Pid),
-  Pid.
+  gen_server:start_link({local, shurl}, short_url, [], []).
+
 
 stop()->
-  io:format("stop called~n"),
-  short_url_server ! stop,
-  ok.
+  io:format("normal stop called~n"),
+  gen_server:cast(shurl, stop).
 
 restart()->
   stop(),
   start().
 
 short(LongUrl)->
-  io:format("short for ~p called~n", [LongUrl]),
-  Uniq=make_ref(),
-  short_url_server ! {short, LongUrl, self(), Uniq},
-  receive
-    {Uniq, Ans}->Ans
-  end.
+  gen_server:call(shurl, {short, LongUrl}).
 
 long(ShortUrl)->
-  io:format("long for ~p called~n", [ShortUrl]),
-  Uniq=make_ref(),
-  short_url_server ! {long, ShortUrl, self(), Uniq},
-  receive
-    {Uniq, Ans}->Ans
-  end.
+  gen_server:call(shurl, {long, ShortUrl}).
 
-% main loop
-loop(State)-> 
-  io:format("~p wait for mesages~n", [self()]),
-  receive
-    {short, LongUrl, From, Uniq}-> 
-      % io:format("short mesage received~n"),
-      {Res, NewState} = case dict:is_key(LongUrl, State) of
-        true->{dict:fetch(LongUrl, State), State};
-        false->ShortUrl="http://short.by/"++rand_string(7),
-               {ShortUrl, dict:store(LongUrl, ShortUrl, State)}
-        end,
-      io:format("Res= ~p~n", [Res]),
-      From ! {Uniq, Res},
-      loop(NewState);
-    {long, ShortUrl, From, Uniq}-> %something
-      % io:format("long mesage received~n"),
-      FDict= dict:filter(fun(_Key, Value)-> Value =:= ShortUrl end, State),
-      FList=dict:to_list(FDict),
-      Res = case FList of 
-        []->"";
-        [{Ans, _}]-> Ans;
-        Any->io:format("Any= ~p~n", [Any]), ""
-      end,
-      io:format("Res= ~p~n", [Res]),
-      From ! {Uniq, Res},
-      loop(State);
-    stop-> ok;
-    Msg-> io:format("error: unknown message ~p~n", [Msg]),
-      loop(State)
-end.
+% gen_server API
+init([])->
+  io:format("start server~n"),
+  {ok, {dict:new(), dict:new()}}.
+
+% S2L - Short to Long
+% L2 - Long to Short
+handle_call({short, LongUrl}, _From, {S2L, L2S}=State)->
+  {Res, NewState} = case dict:is_key(LongUrl, L2S) of
+    true-> 
+      {dict: fetch(LongUrl, L2S), {S2L, L2S}};
+    false-> 
+      ShortUrl="http://sh.by/" ++ rand_string(7),
+      NewS2L=dict:store(ShortUrl, LongUrl, S2L),
+
+      NewL2S=dict:store(LongUrl, ShortUrl, L2S),
+
+      {ShortUrl, {NewS2L, NewL2S}}
+  end,
+  {reply, Res, NewState};
+
+  handle_call({long, ShortUrl}, _From, {S2L, _}=State)->
+    Res= case dict:is_key(ShortUrl, S2L) of
+      true->dict:fetch(ShortUrl, S2L);
+      false -> ""
+    end,
+    {reply, Res, State};
+
+handle_call(Msg, From, State)->
+  error_logger:error_msg("unknown msg ~p from ~p ~n", [Msg, From]),
+  {noreply, State}.
+
+
+handle_cast(stop, State)->
+  io:format("normal stop ~n"),
+  {stop, normal, State};
+
+handle_cast(Msg, State) ->
+  error_logger: error_msg("unknown msg ~p ~n", [Msg]),
+  {noreply, State}.
+
+
+handle_info(Msg, State)->
+  error_logger: error_msg("unknown msg ~p ~n", [Msg]),
+  {noreply, State}.
+
+
+terminate(_Reason, _State)->
+  ok.
+
+
+code_change(_OldVersion, State, _Extra)->
+  {ok, State}.
+
+
 
 % internal methods
 rand_string(Length)-> 
@@ -79,28 +96,11 @@ rand_char()->
   lists:nth(Index, Chars).
 
 
-
-% fun short(other)->
-%   other;
-% fun short(Num)->
-%   Num;
-% fun short({user, Name})->
-%   Name;
-% fun short(some)->
-%   some.
-
-% fun short(Num)->
-%   case Num of 
-%     other->other;
-%     some->some;
-%     22->22;
-%     _-> error
-% end.
-
 % c(short_url). 
 % short_url:start().
 % short_url:stop().
 % short_url:short("http://google.com").
+% short_url:long("http://sh.by/slnfohb").
 % short_url:short("http://mail.com").
 % short_url:long("http://dd").
 % short_url:rand_char().
@@ -117,4 +117,3 @@ rand_char()->
 
 
 % short_url:restart().
-% L=[{"aa", "bb"}].
